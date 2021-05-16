@@ -4,7 +4,7 @@ use byteorder::{LittleEndian as L, ReadBytesExt};
 use flate2::read::ZlibDecoder;
 use std::io::{Read, Seek};
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct SaveFile {
     pub save_header: i32,
     pub save_version: i32,
@@ -68,16 +68,26 @@ impl SaveFile {
         let data_length = decoder.read_i32::<L>()?;
 
         let world_object_count = decoder.read_u32::<L>()?;
-        self.world_objects
-            .push(SaveObject::parse(&mut decoder, buffers)?);
+        for _ in 0..world_object_count {
+            self.world_objects
+                .push(SaveObject::parse(&mut decoder, buffers)?);
+        }
         Ok(())
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum SaveObject {
-    SaveComponent { parent_entity_name: String },
-    SaveEntity { need_transform: i32 },
+    SaveComponent {
+        parent_entity_name: String,
+    },
+    SaveEntity {
+        need_transform: bool,
+        rotation: Vector4,
+        position: Vector3,
+        scale: Vector3,
+        was_placed_in_level: bool,
+    },
 }
 
 impl SaveObject {
@@ -88,13 +98,16 @@ impl SaveObject {
         Ok(match file.read_i32::<L>()? {
             0 => {
                 let mut parent_entity_name = String::new();
-                read_string(file, buffers, &mut parent_entity_name);
+                read_string(file, buffers, &mut parent_entity_name)?;
                 SaveObject::SaveComponent { parent_entity_name }
             }
-            1 => {
-                let need_transform = file.read_i32::<L>()?;
-                SaveObject::SaveEntity { need_transform }
-            }
+            1 => SaveObject::SaveEntity {
+                need_transform: file.read_i32::<L>()? == 1,
+                rotation: Vector4::parse(file)?,
+                position: Vector3::parse(file)?,
+                scale: Vector3::parse(file)?,
+                was_placed_in_level: file.read_i32::<L>()? == 1,
+            },
             n => return Err(Error::msg(format!("unknown object type: {}", n))),
         })
     }
@@ -129,6 +142,66 @@ where
     };
 
     Ok(())
+}
+
+#[derive(Debug, Default, Copy, Clone, PartialEq, PartialOrd)]
+pub struct Vector2 {
+    pub x: f32,
+    pub y: f32,
+}
+
+impl Vector2 {
+    pub fn parse<R>(file: &mut R) -> Result<Self>
+    where
+        R: Read,
+    {
+        Ok(Self {
+            x: file.read_f32::<L>()?,
+            y: file.read_f32::<L>()?,
+        })
+    }
+}
+
+#[derive(Debug, Default, Copy, Clone, PartialEq, PartialOrd)]
+pub struct Vector3 {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+}
+
+impl Vector3 {
+    pub fn parse<R>(file: &mut R) -> Result<Self>
+    where
+        R: Read,
+    {
+        Ok(Self {
+            x: file.read_f32::<L>()?,
+            y: file.read_f32::<L>()?,
+            z: file.read_f32::<L>()?,
+        })
+    }
+}
+
+#[derive(Debug, Default, Copy, Clone, PartialEq, PartialOrd)]
+pub struct Vector4 {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub w: f32,
+}
+
+impl Vector4 {
+    pub fn parse<R>(file: &mut R) -> Result<Self>
+    where
+        R: Read,
+    {
+        Ok(Self {
+            x: file.read_f32::<L>()?,
+            y: file.read_f32::<L>()?,
+            z: file.read_f32::<L>()?,
+            w: file.read_f32::<L>()?,
+        })
+    }
 }
 
 #[cfg(test)]
