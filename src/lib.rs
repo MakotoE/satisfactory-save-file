@@ -1,4 +1,5 @@
-use anyhow::Result;
+use crate::SaveObject::SaveComponent;
+use anyhow::{Error, Result};
 use byteorder::{LittleEndian as L, ReadBytesExt};
 use flate2::read::ZlibDecoder;
 use std::io::{Read, Seek};
@@ -17,7 +18,7 @@ pub struct SaveFile {
     pub editor_object_version: i32,
     pub mod_meta_data: String,
     pub is_modded_save: bool,
-    pub world_objects: Vec<WorldObject>,
+    pub world_objects: Vec<SaveObject>,
 }
 
 impl SaveFile {
@@ -25,31 +26,30 @@ impl SaveFile {
     where
         R: Read + Seek,
     {
+        let mut buffers: (Vec<u8>, Vec<u16>) = (Vec::new(), Vec::new());
         let mut save_file = SaveFile::default();
-        save_file.parse(file)?;
+        save_file.parse(file, &mut buffers)?;
         Ok(save_file)
     }
 
-    pub fn parse<R>(&mut self, file: &mut R) -> Result<()>
+    pub fn parse<R>(&mut self, file: &mut R, buffers: &mut (Vec<u8>, Vec<u16>)) -> Result<()>
     where
         R: Read + Seek,
     {
         // https://github.com/Goz3rr/SatisfactorySaveEditor
         // https://satisfactory.fandom.com/wiki/Save_files (outdated info)
 
-        let mut buffers: (Vec<u8>, Vec<u16>) = (Vec::new(), Vec::new());
-
         self.save_header = file.read_i32::<L>()?;
         self.save_version = file.read_i32::<L>()?;
         self.build_version = file.read_i32::<L>()?;
-        read_string(file, &mut buffers, &mut self.world_type)?;
-        read_string(file, &mut buffers, &mut self.world_properties)?;
-        read_string(file, &mut buffers, &mut self.session_name)?;
+        read_string(file, buffers, &mut self.world_type)?;
+        read_string(file, buffers, &mut self.world_properties)?;
+        read_string(file, buffers, &mut self.session_name)?;
         self.play_time = file.read_i32::<L>()?;
         self.save_date = file.read_i64::<L>()?;
         self.session_visibility = file.read_u8()?;
         self.editor_object_version = file.read_i32::<L>()?;
-        read_string(file, &mut buffers, &mut self.mod_meta_data)?;
+        read_string(file, buffers, &mut self.mod_meta_data)?;
         self.is_modded_save = file.read_i32::<L>()? > 0;
 
         if file.read_i64::<L>()? != 0x9E2A83C1 {
@@ -68,31 +68,35 @@ impl SaveFile {
         let data_length = decoder.read_i32::<L>()?;
 
         let world_object_count = decoder.read_u32::<L>()?;
-        let mut object = WorldObject::default();
-        object.parse(&mut decoder)?;
-        self.world_objects.push(object);
+        self.world_objects
+            .push(SaveObject::parse(&mut decoder, buffers)?);
         Ok(())
     }
 }
 
-#[derive(Debug, Default, Clone)]
-pub struct WorldObject {
-    pub object_type: i32,
-    pub name: String,
-    pub property_type: String,
+#[derive(Debug, Clone)]
+pub enum SaveObject {
+    SaveComponent { parent_entity_name: String },
+    SaveEntity { need_transform: i32 },
 }
 
-impl WorldObject {
-    pub fn parse<R>(&mut self, file: &mut R) -> Result<()>
+impl SaveObject {
+    pub fn parse<R>(file: &mut R, buffers: &mut (Vec<u8>, Vec<u16>)) -> Result<Self>
     where
         R: Read,
     {
-        let mut buffers: (Vec<u8>, Vec<u16>) = (Vec::new(), Vec::new());
-
-        self.object_type = file.read_i32::<L>()?;
-        read_string(file, &mut buffers, &mut self.name)?;
-        read_string(file, &mut buffers, &mut self.property_type)?;
-        Ok(())
+        Ok(match file.read_i32::<L>()? {
+            0 => {
+                let mut parent_entity_name = String::new();
+                read_string(file, buffers, &mut parent_entity_name);
+                SaveObject::SaveComponent { parent_entity_name }
+            }
+            1 => {
+                let need_transform = file.read_i32::<L>()?;
+                SaveObject::SaveEntity { need_transform }
+            }
+            n => return Err(Error::msg(format!("unknown object type: {}", n))),
+        })
     }
 }
 
@@ -138,8 +142,7 @@ mod tests {
     fn parse() {
         env_logger::builder().is_test(true).try_init().unwrap();
         let mut file = File::open("test_files/new_world.sav").unwrap();
-        let mut save_file = SaveFile::default();
-        save_file.parse(&mut file).unwrap();
+        let save_file = SaveFile::new(&mut file).unwrap();
         dbg!(&save_file);
 
         assert_eq!(save_file.save_header, 8);
