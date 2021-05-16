@@ -1,7 +1,7 @@
 use anyhow::Result;
 use byteorder::{LittleEndian as L, ReadBytesExt};
 use flate2::read::ZlibDecoder;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Read, Seek};
 
 #[derive(Debug, Default, Clone)]
 pub struct SaveFile {
@@ -11,10 +11,13 @@ pub struct SaveFile {
     pub world_type: String,       // Make this an enum
     pub world_properties: String, // Make this a struct
     pub session_name: String,
-    pub play_time: i32, // Make this a duration type
-    pub save_date: i64, // Make this a date type
+    pub play_time: i32,         // Make this a duration type
+    pub save_date: i64,         // Make this a date type
     pub session_visibility: u8, // Make this an enum
-                        // pub world_objects: Vec<WorldObject>,
+    pub editor_object_version: i32,
+    pub mod_meta_data: String,
+    pub is_modded_save: bool,
+    pub world_objects: Vec<WorldObject>,
 }
 
 impl SaveFile {
@@ -31,8 +34,8 @@ impl SaveFile {
     where
         R: Read + Seek,
     {
-        // https://satisfactory.fandom.com/wiki/Save_files
         // https://github.com/Goz3rr/SatisfactorySaveEditor
+        // https://satisfactory.fandom.com/wiki/Save_files (outdated info)
 
         let mut buffers: (Vec<u8>, Vec<u16>) = (Vec::new(), Vec::new());
 
@@ -45,16 +48,16 @@ impl SaveFile {
         self.play_time = file.read_i32::<L>()?;
         self.save_date = file.read_i64::<L>()?;
         self.session_visibility = file.read_u8()?;
-        let editor_object_version = file.read_i32::<L>()?;
-        // file.read_i64::<L>()?;
-        let mut mod_meta_data = String::new();
-        read_string(file, &mut buffers, &mut mod_meta_data)?;
-        let is_modded_save = file.read_i32::<L>()?;
+        self.editor_object_version = file.read_i32::<L>()?;
+        read_string(file, &mut buffers, &mut self.mod_meta_data)?;
+        self.is_modded_save = file.read_i32::<L>()? > 0;
 
-        let package_file_tag = file.read_i64::<L>()?;
-        debug_assert_eq!(package_file_tag, 0x9E2A83C1);
-        let max_chunk_size = file.read_i64::<L>()?;
-        debug_assert_eq!(max_chunk_size, 131072);
+        if file.read_i64::<L>()? != 0x9E2A83C1 {
+            log::error!("unexpected package file tag");
+        }
+        if file.read_i64::<L>()? != 131072 {
+            log::error!("unexpected max chunk size");
+        }
         let chunk_compressed_length = file.read_i64::<L>()?;
         let chunk_uncompressed_length = file.read_i64::<L>()?;
         let chunk_compressed_length_1 = file.read_i64::<L>()?;
@@ -62,37 +65,36 @@ impl SaveFile {
 
         let mut decoder = ZlibDecoder::new(file);
 
-        let mut name = String::new();
-        read_string(&mut decoder, &mut buffers, &mut name)?;
+        let data_length = decoder.read_i32::<L>()?;
 
-        // let world_object_count = file.read_i32::<L>()?;
-        // let mut object = WorldObject::default();
-        // object.parse(file)?;
+        let world_object_count = decoder.read_u32::<L>()?;
+        let mut object = WorldObject::default();
+        object.parse(&mut decoder)?;
+        self.world_objects.push(object);
         Ok(())
     }
 }
 
-// #[derive(Debug, Default, Clone)]
-// pub struct WorldObject {
-//     pub object_type: i32,
-//     pub name: String,
-//     pub property_type: String,
-// }
-//
-// impl WorldObject {
-//     pub fn parse<R>(&mut self, file: &mut R) -> Result<()>
-//     where
-//         R: Read + Seek,
-//     {
-//         let mut buffers: (Vec<u8>, Vec<u16>) = (Vec::new(), Vec::new());
-//
-//         self.object_type = file.read_i32::<L>()?;
-//         dbg!(file.seek(SeekFrom::Current(0))?);
-//         // read_string(file, &mut buffers, &mut self.name)?;
-//         // read_string(file, &mut buffers, &mut self.property_type)?;
-//         Ok(())
-//     }
-// }
+#[derive(Debug, Default, Clone)]
+pub struct WorldObject {
+    pub object_type: i32,
+    pub name: String,
+    pub property_type: String,
+}
+
+impl WorldObject {
+    pub fn parse<R>(&mut self, file: &mut R) -> Result<()>
+    where
+        R: Read,
+    {
+        let mut buffers: (Vec<u8>, Vec<u16>) = (Vec::new(), Vec::new());
+
+        self.object_type = file.read_i32::<L>()?;
+        read_string(file, &mut buffers, &mut self.name)?;
+        read_string(file, &mut buffers, &mut self.property_type)?;
+        Ok(())
+    }
+}
 
 fn read_string<R>(file: &mut R, buffers: &mut (Vec<u8>, Vec<u16>), s: &mut String) -> Result<()>
 where
@@ -134,10 +136,17 @@ mod tests {
 
     #[test]
     fn parse() {
+        env_logger::builder().is_test(true).try_init().unwrap();
         let mut file = File::open("test_files/new_world.sav").unwrap();
         let mut save_file = SaveFile::default();
         save_file.parse(&mut file).unwrap();
         dbg!(&save_file);
+
+        assert_eq!(save_file.save_header, 8);
+        assert_eq!(save_file.save_version, 25);
+        assert_eq!(save_file.build_version, 152331);
+        assert_eq!(save_file.world_type, "Persistent_Level");
+        assert_eq!(save_file.session_name, "test_file");
     }
 
     fn to_encoding(b: &[u8]) -> Vec<u8> {
