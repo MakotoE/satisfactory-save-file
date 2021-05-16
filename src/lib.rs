@@ -30,13 +30,13 @@ impl SaveFile {
     {
         // https://satisfactory.fandom.com/wiki/Save_files
 
-        let mut buffer: Vec<u8> = Vec::new();
+        let mut buffers: (Vec<u8>, Vec<u16>) = (Vec::new(), Vec::new());
 
         self.save_header = file.read_i32::<L>()?;
         self.save_version = file.read_i32::<L>()?;
         self.build_version = file.read_i32::<L>()?;
-        read_string(file, &mut buffer, &mut self.world_type)?;
-        read_string(file, &mut buffer, &mut self.world_properties)?;
+        read_string(file, &mut buffers, &mut self.world_type)?;
+        read_string(file, &mut buffers, &mut self.world_properties)?;
         self.play_time = file.read_i32::<L>()?;
         self.save_date = file.read_i64::<L>()?;
         self.session_visibility = file.read_u8()?;
@@ -47,7 +47,7 @@ impl SaveFile {
 #[derive(Debug, Default, Clone)]
 pub struct WorldObject {}
 
-fn read_string<R>(file: &mut R, buffer: &mut Vec<u8>, s: &mut String) -> Result<()>
+fn read_string<R>(file: &mut R, buffers: &mut (Vec<u8>, Vec<u16>), s: &mut String) -> Result<()>
 where
     R: Read,
 {
@@ -56,17 +56,21 @@ where
     let length = file.read_i32::<L>()?;
 
     if length < 0 {
-        let mut b: Vec<u16> = Vec::new();
-        b.resize(((-length) as usize).saturating_sub(1) / 2, 0);
-        file.read_u16_into::<L>(&mut b)?;
-        s.clone_from(&String::from_utf16_lossy(&b));
+        buffers.1.clear();
+        buffers
+            .1
+            .resize(((-length) as usize).saturating_sub(1) / 2, 0);
+        file.read_u16_into::<L>(&mut buffers.1)?;
+        s.clone_from(&String::from_utf16_lossy(&buffers.1));
     } else {
-        buffer.clear();
-        buffer.resize((length.abs() as usize).saturating_sub(1), b'\0');
-        file.read_exact(buffer)?;
+        buffers.0.clear();
+        buffers
+            .0
+            .resize((length.abs() as usize).saturating_sub(1), b'\0');
+        file.read_exact(&mut buffers.0)?;
         // Skip null char
         file.read_u8()?;
-        s.push_str(std::str::from_utf8(&buffer)?);
+        s.push_str(std::str::from_utf8(&buffers.0)?);
     };
 
     Ok(())
@@ -98,28 +102,28 @@ mod tests {
 
     #[test]
     fn test_read_string() {
-        let mut buffer: Vec<u8> = Vec::new();
+        let mut buffers: (Vec<u8>, Vec<u16>) = (Vec::new(), Vec::new());
         let mut result = String::new();
         {
-            let result = read_string(&mut "".as_bytes(), &mut buffer, &mut result);
+            let result = read_string(&mut "".as_bytes(), &mut buffers, &mut result);
             assert!(result.is_err());
         }
         {
             let test_string = "";
             let encoded = to_encoding(test_string.as_bytes());
-            read_string(&mut encoded.as_slice(), &mut buffer, &mut result).unwrap();
+            read_string(&mut encoded.as_slice(), &mut buffers, &mut result).unwrap();
             assert_eq!(result, test_string);
         }
         {
             let test_string = "a";
             let encoded = to_encoding(test_string.as_bytes());
-            read_string(&mut encoded.as_slice(), &mut buffer, &mut result).unwrap();
+            read_string(&mut encoded.as_slice(), &mut buffers, &mut result).unwrap();
             assert_eq!(result, test_string);
         }
         {
             let test_string = "abc";
             let encoded = to_encoding(test_string.as_bytes());
-            read_string(&mut encoded.as_slice(), &mut buffer, &mut result).unwrap();
+            read_string(&mut encoded.as_slice(), &mut buffers, &mut result).unwrap();
             assert_eq!(result, test_string);
         }
         {
@@ -136,7 +140,7 @@ mod tests {
                 .chain([b'\0', b'\0'].iter())
                 .copied()
                 .collect();
-            read_string(&mut encoded.as_slice(), &mut buffer, &mut result).unwrap();
+            read_string(&mut encoded.as_slice(), &mut buffers, &mut result).unwrap();
             assert_eq!(result, test_string);
         }
     }
