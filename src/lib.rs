@@ -1,6 +1,7 @@
 use anyhow::Result;
 use byteorder::{LittleEndian as L, ReadBytesExt};
-use std::io::Read;
+use flate2::read::ZlibDecoder;
+use std::io::{Read, Seek, SeekFrom};
 
 #[derive(Debug, Default, Clone)]
 pub struct SaveFile {
@@ -9,15 +10,17 @@ pub struct SaveFile {
     pub build_version: i32,
     pub world_type: String,       // Make this an enum
     pub world_properties: String, // Make this a struct
-    pub play_time: i32,           // Make this a duration type
-    pub save_date: i64,           // Make this a date type
-    pub session_visibility: u8,   // Make this an enum
+    pub session_name: String,
+    pub play_time: i32, // Make this a duration type
+    pub save_date: i64, // Make this a date type
+    pub session_visibility: u8, // Make this an enum
+                        // pub world_objects: Vec<WorldObject>,
 }
 
 impl SaveFile {
     pub fn new<R>(file: &mut R) -> Result<SaveFile>
     where
-        R: Read,
+        R: Read + Seek,
     {
         let mut save_file = SaveFile::default();
         save_file.parse(file)?;
@@ -26,9 +29,10 @@ impl SaveFile {
 
     pub fn parse<R>(&mut self, file: &mut R) -> Result<()>
     where
-        R: Read,
+        R: Read + Seek,
     {
         // https://satisfactory.fandom.com/wiki/Save_files
+        // https://github.com/Goz3rr/SatisfactorySaveEditor
 
         let mut buffers: (Vec<u8>, Vec<u16>) = (Vec::new(), Vec::new());
 
@@ -37,15 +41,58 @@ impl SaveFile {
         self.build_version = file.read_i32::<L>()?;
         read_string(file, &mut buffers, &mut self.world_type)?;
         read_string(file, &mut buffers, &mut self.world_properties)?;
+        read_string(file, &mut buffers, &mut self.session_name)?;
         self.play_time = file.read_i32::<L>()?;
         self.save_date = file.read_i64::<L>()?;
         self.session_visibility = file.read_u8()?;
+        let editor_object_version = file.read_i32::<L>()?;
+        // file.read_i64::<L>()?;
+        let mut mod_meta_data = String::new();
+        read_string(file, &mut buffers, &mut mod_meta_data)?;
+        let is_modded_save = file.read_i32::<L>()?;
+
+        let package_file_tag = file.read_i64::<L>()?;
+        debug_assert_eq!(package_file_tag, 0x9E2A83C1);
+        let max_chunk_size = file.read_i64::<L>()?;
+        debug_assert_eq!(max_chunk_size, 131072);
+        let chunk_compressed_length = file.read_i64::<L>()?;
+        let chunk_uncompressed_length = file.read_i64::<L>()?;
+        let chunk_compressed_length_1 = file.read_i64::<L>()?;
+        let chunk_uncompressed_length_1 = file.read_i64::<L>()?;
+
+        let mut decoder = ZlibDecoder::new(file);
+
+        let mut name = String::new();
+        read_string(&mut decoder, &mut buffers, &mut name)?;
+
+        // let world_object_count = file.read_i32::<L>()?;
+        // let mut object = WorldObject::default();
+        // object.parse(file)?;
         Ok(())
     }
 }
 
-#[derive(Debug, Default, Clone)]
-pub struct WorldObject {}
+// #[derive(Debug, Default, Clone)]
+// pub struct WorldObject {
+//     pub object_type: i32,
+//     pub name: String,
+//     pub property_type: String,
+// }
+//
+// impl WorldObject {
+//     pub fn parse<R>(&mut self, file: &mut R) -> Result<()>
+//     where
+//         R: Read + Seek,
+//     {
+//         let mut buffers: (Vec<u8>, Vec<u16>) = (Vec::new(), Vec::new());
+//
+//         self.object_type = file.read_i32::<L>()?;
+//         dbg!(file.seek(SeekFrom::Current(0))?);
+//         // read_string(file, &mut buffers, &mut self.name)?;
+//         // read_string(file, &mut buffers, &mut self.property_type)?;
+//         Ok(())
+//     }
+// }
 
 fn read_string<R>(file: &mut R, buffers: &mut (Vec<u8>, Vec<u16>), s: &mut String) -> Result<()>
 where
@@ -68,8 +115,10 @@ where
             .0
             .resize((length.abs() as usize).saturating_sub(1), b'\0');
         file.read_exact(&mut buffers.0)?;
-        // Skip null char
-        file.read_u8()?;
+        if length > 0 {
+            // Skip null char
+            file.read_u8()?;
+        }
         s.push_str(std::str::from_utf8(&buffers.0)?);
     };
 
@@ -80,6 +129,7 @@ where
 mod tests {
     use crate::{read_string, SaveFile};
     use std::fs::File;
+    use std::io::Cursor;
     use std::iter::once;
 
     #[test]
@@ -105,28 +155,25 @@ mod tests {
         let mut buffers: (Vec<u8>, Vec<u16>) = (Vec::new(), Vec::new());
         let mut result = String::new();
         {
-            let result = read_string(&mut "".as_bytes(), &mut buffers, &mut result);
+            // Empty file
+            let mut data = Cursor::new(Vec::new());
+            let result = read_string(&mut data, &mut buffers, &mut result);
             assert!(result.is_err());
         }
         {
-            let test_string = "";
+            // Just the prefix
+            let mut data = &0_i32.to_le_bytes()[..];
+            read_string(&mut data, &mut buffers, &mut result).unwrap();
+            assert_eq!(result, "");
+        }
+        // Various strings
+        for test_string in &["", "a", "abc"] {
             let encoded = to_encoding(test_string.as_bytes());
             read_string(&mut encoded.as_slice(), &mut buffers, &mut result).unwrap();
-            assert_eq!(result, test_string);
+            assert_eq!(result, *test_string);
         }
         {
-            let test_string = "a";
-            let encoded = to_encoding(test_string.as_bytes());
-            read_string(&mut encoded.as_slice(), &mut buffers, &mut result).unwrap();
-            assert_eq!(result, test_string);
-        }
-        {
-            let test_string = "abc";
-            let encoded = to_encoding(test_string.as_bytes());
-            read_string(&mut encoded.as_slice(), &mut buffers, &mut result).unwrap();
-            assert_eq!(result, test_string);
-        }
-        {
+            // UTF-16
             let test_string = "abc";
             let utf16: Vec<u16> = test_string.encode_utf16().collect();
             let mut utf16_bytes: Vec<u8> = Vec::new();
