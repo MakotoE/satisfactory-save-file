@@ -21,34 +21,26 @@ pub struct SaveFile {
 }
 
 impl SaveFile {
-    pub fn new<R>(file: &mut R) -> Result<SaveFile>
-    where
-        R: Read + Seek,
-    {
-        let mut save_file = SaveFile::default();
-        save_file.parse(file)?;
-        Ok(save_file)
-    }
-
-    pub fn parse<R>(&mut self, file: &mut R) -> Result<()>
+    pub fn parse<R>(file: &mut R) -> Result<SaveFile>
     where
         R: Read + Seek,
     {
         // https://github.com/Goz3rr/SatisfactorySaveEditor
         // https://satisfactory.fandom.com/wiki/Save_files (outdated info)
 
-        self.save_header = file.read_i32::<L>()?;
-        self.save_version = file.read_i32::<L>()?;
-        self.build_version = file.read_i32::<L>()?;
-        self.world_type = read_string(file)?;
-        self.world_properties = read_string(file)?;
-        self.session_name = read_string(file)?;
-        self.play_time = file.read_i32::<L>()?;
-        self.save_date = file.read_i64::<L>()?;
-        self.session_visibility = file.read_u8()?;
-        self.editor_object_version = file.read_i32::<L>()?;
-        self.mod_meta_data = read_string(file)?;
-        self.is_modded_save = file.read_i32::<L>()? > 0;
+        let mut sf = SaveFile::default();
+        sf.save_header = file.read_i32::<L>()?;
+        sf.save_version = file.read_i32::<L>()?;
+        sf.build_version = file.read_i32::<L>()?;
+        sf.world_type = read_string(file)?;
+        sf.world_properties = read_string(file)?;
+        sf.session_name = read_string(file)?;
+        sf.play_time = file.read_i32::<L>()?;
+        sf.save_date = file.read_i64::<L>()?;
+        sf.session_visibility = file.read_u8()?;
+        sf.editor_object_version = file.read_i32::<L>()?;
+        sf.mod_meta_data = read_string(file)?;
+        sf.is_modded_save = file.read_i32::<L>()? > 0;
 
         if file.read_i64::<L>()? != 0x9E2A83C1 {
             log::error!("unexpected package file tag");
@@ -67,9 +59,9 @@ impl SaveFile {
 
         let world_object_count = decoder.read_u32::<L>()?;
         for _ in 0..world_object_count {
-            self.save_objects.push(SaveObject::parse(&mut decoder)?);
+            sf.save_objects.push(SaveObject::parse(&mut decoder)?);
         }
-        Ok(())
+        Ok(sf)
     }
 }
 
@@ -140,7 +132,7 @@ where
             // Skip null char
             file.read_u8()?;
         }
-        String::from_utf8(buffer)?
+        String::from_utf8_lossy(&buffer).into_owned()
     })
 }
 
@@ -206,7 +198,7 @@ impl Vector4 {
 
 #[cfg(test)]
 mod tests {
-    use crate::{read_string, SaveFile};
+    use super::*;
     use std::fs::File;
     use std::io::Cursor;
     use std::iter::once;
@@ -215,7 +207,7 @@ mod tests {
     fn parse() {
         env_logger::builder().is_test(true).try_init().unwrap();
         let mut file = File::open("test_files/new_world.sav").unwrap();
-        let save_file = SaveFile::new(&mut file).unwrap();
+        let save_file = SaveFile::parse(&mut file).unwrap();
         dbg!(&save_file);
 
         assert_eq!(save_file.save_header, 8);
