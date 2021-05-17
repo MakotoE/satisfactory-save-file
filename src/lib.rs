@@ -42,14 +42,14 @@ impl SaveFile {
         self.save_header = file.read_i32::<L>()?;
         self.save_version = file.read_i32::<L>()?;
         self.build_version = file.read_i32::<L>()?;
-        read_string(file, buffers, &mut self.world_type)?;
-        read_string(file, buffers, &mut self.world_properties)?;
-        read_string(file, buffers, &mut self.session_name)?;
+        self.world_type = read_string(file, buffers)?;
+        self.world_properties = read_string(file, buffers)?;
+        self.session_name = read_string(file, buffers)?;
         self.play_time = file.read_i32::<L>()?;
         self.save_date = file.read_i64::<L>()?;
         self.session_visibility = file.read_u8()?;
         self.editor_object_version = file.read_i32::<L>()?;
-        read_string(file, buffers, &mut self.mod_meta_data)?;
+        self.mod_meta_data = read_string(file, buffers)?;
         self.is_modded_save = file.read_i32::<L>()? > 0;
 
         if file.read_i64::<L>()? != 0x9E2A83C1 {
@@ -102,27 +102,17 @@ impl SaveObject {
         R: Read,
     {
         let object_type = file.read_i32::<L>()?;
-        let mut type_path = String::new();
-        read_string(file, buffers, &mut type_path)?;
-        let mut root_object = String::new();
-        read_string(file, buffers, &mut root_object)?;
-        let mut instance_name = String::new();
-        read_string(file, buffers, &mut instance_name)?;
         Ok(match object_type {
-            0 => {
-                let mut parent_entity_name = String::new();
-                read_string(file, buffers, &mut parent_entity_name)?;
-                SaveObject::SaveComponent {
-                    type_path,
-                    root_object,
-                    instance_name,
-                    parent_entity_name,
-                }
-            }
+            0 => SaveObject::SaveComponent {
+                type_path: read_string(file, buffers)?,
+                root_object: read_string(file, buffers)?,
+                instance_name: read_string(file, buffers)?,
+                parent_entity_name: read_string(file, buffers)?,
+            },
             1 => SaveObject::SaveEntity {
-                type_path,
-                root_object,
-                instance_name,
+                type_path: read_string(file, buffers)?,
+                root_object: read_string(file, buffers)?,
+                instance_name: read_string(file, buffers)?,
                 need_transform: file.read_i32::<L>()? == 1,
                 rotation: Vector4::parse(file)?,
                 position: Vector3::parse(file)?,
@@ -134,21 +124,19 @@ impl SaveObject {
     }
 }
 
-fn read_string<R>(file: &mut R, buffers: &mut (Vec<u8>, Vec<u16>), s: &mut String) -> Result<()>
+fn read_string<R>(file: &mut R, buffers: &mut (Vec<u8>, Vec<u16>)) -> Result<String>
 where
     R: Read,
 {
-    s.clear();
-
     let length = file.read_i32::<L>()?;
 
-    if length < 0 {
+    Ok(if length < 0 {
         buffers.1.clear();
         buffers
             .1
             .resize(((-length) as usize).saturating_sub(1) / 2, 0);
         file.read_u16_into::<L>(&mut buffers.1)?;
-        s.clone_from(&String::from_utf16_lossy(&buffers.1));
+        String::from_utf16_lossy(&buffers.1)
     } else {
         buffers.0.clear();
         buffers
@@ -159,10 +147,8 @@ where
             // Skip null char
             file.read_u8()?;
         }
-        s.push_str(std::str::from_utf8(&buffers.0)?);
-    };
-
-    Ok(())
+        String::from_utf8(buffers.0.clone())?
+    })
 }
 
 #[derive(Debug, Default, Copy, Clone, PartialEq, PartialOrd)]
@@ -259,24 +245,23 @@ mod tests {
     #[test]
     fn test_read_string() {
         let mut buffers: (Vec<u8>, Vec<u16>) = (Vec::new(), Vec::new());
-        let mut result = String::new();
         {
             // Empty file
             let mut data = Cursor::new(Vec::new());
-            let result = read_string(&mut data, &mut buffers, &mut result);
-            assert!(result.is_err());
+            assert!(read_string(&mut data, &mut buffers).is_err());
         }
         {
             // Just the prefix
             let mut data = &0_i32.to_le_bytes()[..];
-            read_string(&mut data, &mut buffers, &mut result).unwrap();
-            assert_eq!(result, "");
+            assert_eq!(read_string(&mut data, &mut buffers).unwrap(), "");
         }
         // Various strings
         for test_string in &["", "a", "abc"] {
             let encoded = to_encoding(test_string.as_bytes());
-            read_string(&mut encoded.as_slice(), &mut buffers, &mut result).unwrap();
-            assert_eq!(result, *test_string);
+            assert_eq!(
+                read_string(&mut encoded.as_slice(), &mut buffers).unwrap(),
+                *test_string
+            );
         }
         {
             // UTF-16
@@ -293,8 +278,10 @@ mod tests {
                 .chain([b'\0', b'\0'].iter())
                 .copied()
                 .collect();
-            read_string(&mut encoded.as_slice(), &mut buffers, &mut result).unwrap();
-            assert_eq!(result, test_string);
+            assert_eq!(
+                read_string(&mut encoded.as_slice(), &mut buffers).unwrap(),
+                test_string
+            );
         }
     }
 }
