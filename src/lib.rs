@@ -18,7 +18,7 @@ pub struct SaveFile {
     pub editor_object_version: i32,
     pub mod_meta_data: String,
     pub is_modded_save: bool,
-    pub world_objects: Vec<SaveObject>,
+    pub save_objects: Vec<SaveObject>,
 }
 
 impl SaveFile {
@@ -69,7 +69,7 @@ impl SaveFile {
 
         let world_object_count = decoder.read_u32::<L>()?;
         for _ in 0..world_object_count {
-            self.world_objects
+            self.save_objects
                 .push(SaveObject::parse(&mut decoder, buffers)?);
         }
         Ok(())
@@ -79,9 +79,15 @@ impl SaveFile {
 #[derive(Debug, Clone, PartialEq)]
 pub enum SaveObject {
     SaveComponent {
+        type_path: String,
+        root_object: String,
+        instance_name: String,
         parent_entity_name: String,
     },
     SaveEntity {
+        type_path: String,
+        root_object: String,
+        instance_name: String,
         need_transform: bool,
         rotation: Vector4,
         position: Vector3,
@@ -95,13 +101,28 @@ impl SaveObject {
     where
         R: Read,
     {
-        Ok(match file.read_i32::<L>()? {
+        let object_type = file.read_i32::<L>()?;
+        let mut type_path = String::new();
+        read_string(file, buffers, &mut type_path)?;
+        let mut root_object = String::new();
+        read_string(file, buffers, &mut root_object)?;
+        let mut instance_name = String::new();
+        read_string(file, buffers, &mut instance_name)?;
+        Ok(match object_type {
             0 => {
                 let mut parent_entity_name = String::new();
                 read_string(file, buffers, &mut parent_entity_name)?;
-                SaveObject::SaveComponent { parent_entity_name }
+                SaveObject::SaveComponent {
+                    type_path,
+                    root_object,
+                    instance_name,
+                    parent_entity_name,
+                }
             }
             1 => SaveObject::SaveEntity {
+                type_path,
+                root_object,
+                instance_name,
                 need_transform: file.read_i32::<L>()? == 1,
                 rotation: Vector4::parse(file)?,
                 position: Vector3::parse(file)?,
