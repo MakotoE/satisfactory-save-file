@@ -1,4 +1,3 @@
-use crate::SaveObject::SaveComponent;
 use anyhow::{Error, Result};
 use byteorder::{LittleEndian as L, ReadBytesExt};
 use flate2::read::ZlibDecoder;
@@ -26,13 +25,12 @@ impl SaveFile {
     where
         R: Read + Seek,
     {
-        let mut buffers: (Vec<u8>, Vec<u16>) = (Vec::new(), Vec::new());
         let mut save_file = SaveFile::default();
-        save_file.parse(file, &mut buffers)?;
+        save_file.parse(file)?;
         Ok(save_file)
     }
 
-    pub fn parse<R>(&mut self, file: &mut R, buffers: &mut (Vec<u8>, Vec<u16>)) -> Result<()>
+    pub fn parse<R>(&mut self, file: &mut R) -> Result<()>
     where
         R: Read + Seek,
     {
@@ -42,14 +40,14 @@ impl SaveFile {
         self.save_header = file.read_i32::<L>()?;
         self.save_version = file.read_i32::<L>()?;
         self.build_version = file.read_i32::<L>()?;
-        self.world_type = read_string(file, buffers)?;
-        self.world_properties = read_string(file, buffers)?;
-        self.session_name = read_string(file, buffers)?;
+        self.world_type = read_string(file)?;
+        self.world_properties = read_string(file)?;
+        self.session_name = read_string(file)?;
         self.play_time = file.read_i32::<L>()?;
         self.save_date = file.read_i64::<L>()?;
         self.session_visibility = file.read_u8()?;
         self.editor_object_version = file.read_i32::<L>()?;
-        self.mod_meta_data = read_string(file, buffers)?;
+        self.mod_meta_data = read_string(file)?;
         self.is_modded_save = file.read_i32::<L>()? > 0;
 
         if file.read_i64::<L>()? != 0x9E2A83C1 {
@@ -69,8 +67,7 @@ impl SaveFile {
 
         let world_object_count = decoder.read_u32::<L>()?;
         for _ in 0..world_object_count {
-            self.save_objects
-                .push(SaveObject::parse(&mut decoder, buffers)?);
+            self.save_objects.push(SaveObject::parse(&mut decoder)?);
         }
         Ok(())
     }
@@ -97,22 +94,22 @@ pub enum SaveObject {
 }
 
 impl SaveObject {
-    pub fn parse<R>(file: &mut R, buffers: &mut (Vec<u8>, Vec<u16>)) -> Result<Self>
+    pub fn parse<R>(file: &mut R) -> Result<Self>
     where
         R: Read,
     {
         let object_type = file.read_i32::<L>()?;
         Ok(match object_type {
             0 => SaveObject::SaveComponent {
-                type_path: read_string(file, buffers)?,
-                root_object: read_string(file, buffers)?,
-                instance_name: read_string(file, buffers)?,
-                parent_entity_name: read_string(file, buffers)?,
+                type_path: read_string(file)?,
+                root_object: read_string(file)?,
+                instance_name: read_string(file)?,
+                parent_entity_name: read_string(file)?,
             },
             1 => SaveObject::SaveEntity {
-                type_path: read_string(file, buffers)?,
-                root_object: read_string(file, buffers)?,
-                instance_name: read_string(file, buffers)?,
+                type_path: read_string(file)?,
+                root_object: read_string(file)?,
+                instance_name: read_string(file)?,
                 need_transform: file.read_i32::<L>()? == 1,
                 rotation: Vector4::parse(file)?,
                 position: Vector3::parse(file)?,
@@ -124,30 +121,26 @@ impl SaveObject {
     }
 }
 
-fn read_string<R>(file: &mut R, buffers: &mut (Vec<u8>, Vec<u16>)) -> Result<String>
+fn read_string<R>(file: &mut R) -> Result<String>
 where
     R: Read,
 {
     let length = file.read_i32::<L>()?;
 
     Ok(if length < 0 {
-        buffers.1.clear();
-        buffers
-            .1
-            .resize(((-length) as usize).saturating_sub(1) / 2, 0);
-        file.read_u16_into::<L>(&mut buffers.1)?;
-        String::from_utf16_lossy(&buffers.1)
+        let mut buffer: Vec<u16> = Vec::new();
+        buffer.resize(((-length) as usize).saturating_sub(1) / 2, 0);
+        file.read_u16_into::<L>(&mut buffer)?;
+        String::from_utf16_lossy(&buffer)
     } else {
-        buffers.0.clear();
-        buffers
-            .0
-            .resize((length.abs() as usize).saturating_sub(1), b'\0');
-        file.read_exact(&mut buffers.0)?;
+        let mut buffer: Vec<u8> = Vec::new();
+        buffer.resize((length.abs() as usize).saturating_sub(1), b'\0');
+        file.read_exact(&mut buffer)?;
         if length > 0 {
             // Skip null char
             file.read_u8()?;
         }
-        String::from_utf8(buffers.0.clone())?
+        String::from_utf8(buffer)?
     })
 }
 
@@ -244,24 +237,20 @@ mod tests {
 
     #[test]
     fn test_read_string() {
-        let mut buffers: (Vec<u8>, Vec<u16>) = (Vec::new(), Vec::new());
         {
             // Empty file
             let mut data = Cursor::new(Vec::new());
-            assert!(read_string(&mut data, &mut buffers).is_err());
+            assert!(read_string(&mut data).is_err());
         }
         {
             // Just the prefix
             let mut data = &0_i32.to_le_bytes()[..];
-            assert_eq!(read_string(&mut data, &mut buffers).unwrap(), "");
+            assert_eq!(read_string(&mut data).unwrap(), "");
         }
         // Various strings
         for test_string in &["", "a", "abc"] {
             let encoded = to_encoding(test_string.as_bytes());
-            assert_eq!(
-                read_string(&mut encoded.as_slice(), &mut buffers).unwrap(),
-                *test_string
-            );
+            assert_eq!(read_string(&mut encoded.as_slice()).unwrap(), *test_string);
         }
         {
             // UTF-16
@@ -278,10 +267,7 @@ mod tests {
                 .chain([b'\0', b'\0'].iter())
                 .copied()
                 .collect();
-            assert_eq!(
-                read_string(&mut encoded.as_slice(), &mut buffers).unwrap(),
-                test_string
-            );
+            assert_eq!(read_string(&mut encoded.as_slice()).unwrap(), test_string);
         }
     }
 }
