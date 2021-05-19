@@ -1,7 +1,8 @@
 use anyhow::{Error, Result};
 use byteorder::{LittleEndian as L, ReadBytesExt};
 use flate2::read::ZlibDecoder;
-use std::io::{Read, Seek};
+use std::convert::TryInto;
+use std::io::{Read, Seek, SeekFrom};
 
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct SaveFile {
@@ -55,13 +56,28 @@ impl SaveFile {
 #[derive(Debug)]
 pub struct ChunkedZLibReader<R>
 where
-    R: Read,
+    R: Read + Seek,
 {
     decoder: Option<ZlibDecoder<R>>,
+    chunk_end: u64,
 }
 
-impl<R: Read> ChunkedZLibReader<R> {
+impl<R: Read + Seek> ChunkedZLibReader<R> {
     pub fn new(mut file: R) -> Result<Self> {
+        let chunk_length = ChunkedZLibReader::read_header(&mut file)?;
+        let current_position = file.seek(SeekFrom::Current(0))?;
+        let mut decoder = ZlibDecoder::new(file);
+
+        // Data length
+        decoder.read_i32::<L>()?;
+
+        Ok(Self {
+            decoder: Some(decoder),
+            chunk_end: current_position + chunk_length,
+        })
+    }
+
+    fn read_header(file: &mut R) -> Result<u64> {
         let package_file_tag = file.read_i64::<L>()?;
         if package_file_tag != 0x9E2A83C1 {
             log::error!("unexpected package file tag: {}", package_file_tag);
@@ -71,25 +87,19 @@ impl<R: Read> ChunkedZLibReader<R> {
             log::error!("unexpected max chunk size {}", max_chunk_size);
         }
 
-        ChunkedZLibReader::read_header(&mut file)?;
-        let mut decoder = ZlibDecoder::new(file);
-        let data_length = decoder.read_i32::<L>()?;
-
-        Ok(Self {
-            decoder: Some(decoder),
-        })
-    }
-
-    fn read_header(file: &mut R) -> std::io::Result<()> {
         let chunk_compressed_length = file.read_i64::<L>()?;
-        let chunk_uncompressed_length = file.read_i64::<L>()?;
-        let chunk_compressed_length_1 = file.read_i64::<L>()?;
-        let chunk_uncompressed_length_1 = file.read_i64::<L>()?;
-        Ok(())
+        // Uncompressed length
+        file.read_i64::<L>()?;
+
+        // Duplicate of compressed and uncompressed lengths
+        file.read_i64::<L>()?;
+        file.read_i64::<L>()?;
+
+        Ok(chunk_compressed_length.try_into()?)
     }
 }
 
-impl<R: Read> Read for ChunkedZLibReader<R> {
+impl<R: Read + Seek> Read for ChunkedZLibReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let result = self.decoder.as_mut().unwrap().read(buf);
 
@@ -97,22 +107,21 @@ impl<R: Read> Read for ChunkedZLibReader<R> {
             // End of chunk
             if bytes_read < buf.len() {
                 let mut file = self.decoder.take().unwrap().into_inner();
-                let package_file_tag = file.read_i64::<L>()?;
-                if package_file_tag != 0x9E2A83C1 {
-                    log::error!("unexpected package file tag: {}", package_file_tag);
-                }
-                let max_chunk_size = file.read_i64::<L>()?;
-                if max_chunk_size != 131072 {
-                    log::error!("unexpected max chunk size {}", max_chunk_size);
-                }
 
-                ChunkedZLibReader::read_header(&mut file)?;
+                file.seek(SeekFrom::Start(self.chunk_end))?;
+
+                let chunk_length = match ChunkedZLibReader::read_header(&mut file) {
+                    Ok(n) => n,
+                    Err(e) => return Err(std::io::Error::new(std::io::ErrorKind::Other, e)),
+                };
+
+                const CHUNK_HEADER_LENGTH: u64 = 24;
+                self.chunk_end = self.chunk_end + CHUNK_HEADER_LENGTH + chunk_length;
+
                 self.decoder = Some(ZlibDecoder::new(file));
-                let data_length = self.decoder.as_mut().unwrap().read_i32::<L>()?;
 
-                if let Ok(n) = self.read(buf) {
-                    return Ok(bytes_read + n);
-                }
+                // Data length
+                self.decoder.as_mut().unwrap().read_i32::<L>()?;
             }
         }
 
