@@ -29,27 +29,31 @@ impl SaveFile {
         // https://github.com/Goz3rr/SatisfactorySaveEditor
         // https://satisfactory.fandom.com/wiki/Save_files (outdated info)
 
-        let mut sf = SaveFile::default();
-        sf.save_header = file.read_i32::<L>()?;
-        sf.save_version = file.read_i32::<L>()?;
-        sf.build_version = file.read_i32::<L>()?;
-        sf.world_type = read_string(file)?;
-        sf.world_properties = read_string(file)?;
-        sf.session_name = read_string(file)?;
-        sf.play_time = file.read_i32::<L>()?;
-        sf.save_date = file.read_i64::<L>()?;
-        sf.session_visibility = file.read_u8()?;
-        sf.editor_object_version = file.read_i32::<L>()?;
-        sf.mod_meta_data = read_string(file)?;
-        sf.is_modded_save = file.read_i32::<L>()? > 0;
+        let mut save_file = SaveFile {
+            save_header: file.read_i32::<L>()?,
+            save_version: file.read_i32::<L>()?,
+            build_version: file.read_i32::<L>()?,
+            world_type: read_string(file)?,
+            world_properties: read_string(file)?,
+            session_name: read_string(file)?,
+            play_time: file.read_i32::<L>()?,
+            save_date: file.read_i64::<L>()?,
+            session_visibility: file.read_u8()?,
+            editor_object_version: file.read_i32::<L>()?,
+            mod_meta_data: read_string(file)?,
+            is_modded_save: file.read_i32::<L>()? > 0,
+            save_objects: Vec::new(),
+        };
 
         let mut decoder = ChunkedZLibReader::new(file)?;
 
         let world_object_count = decoder.read_u32::<L>()?;
         for _ in 0..world_object_count {
-            sf.save_objects.push(SaveObject::parse(&mut decoder)?);
+            save_file
+                .save_objects
+                .push(SaveObject::parse(&mut decoder)?);
         }
-        Ok(sf)
+        Ok(save_file)
     }
 }
 
@@ -254,7 +258,7 @@ impl Vector4 {
 mod tests {
     use super::*;
     use std::fs::File;
-    use std::io::{Cursor, BufReader};
+    use std::io::{BufReader, Cursor};
     use std::iter::once;
 
     #[test]
