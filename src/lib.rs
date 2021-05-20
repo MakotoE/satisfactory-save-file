@@ -2,7 +2,7 @@ use anyhow::{Error, Result};
 use byteorder::{LittleEndian as L, ReadBytesExt};
 use flate2::read::ZlibDecoder;
 use std::convert::TryInto;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Read, Seek, Take};
 
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct SaveFile {
@@ -58,22 +58,19 @@ pub struct ChunkedZLibReader<R>
 where
     R: Read + Seek,
 {
-    decoder: Option<ZlibDecoder<R>>,
-    chunk_end: u64,
+    decoder: Option<ZlibDecoder<Take<R>>>,
 }
 
 impl<R: Read + Seek> ChunkedZLibReader<R> {
     pub fn new(mut file: R) -> Result<Self> {
         let chunk_length = ChunkedZLibReader::read_header(&mut file)?;
-        let current_position = file.seek(SeekFrom::Current(0))?;
-        let mut decoder = ZlibDecoder::new(file);
+        let mut decoder = ZlibDecoder::new(file.take(chunk_length));
 
         // Data length
         decoder.read_i32::<L>()?;
 
         Ok(Self {
             decoder: Some(decoder),
-            chunk_end: current_position + chunk_length,
         })
     }
 
@@ -83,7 +80,7 @@ impl<R: Read + Seek> ChunkedZLibReader<R> {
             log::error!("unexpected package file tag: {}", package_file_tag);
         }
         let max_chunk_size = file.read_i64::<L>()?;
-        if max_chunk_size != 131072 {
+        if max_chunk_size != 0x20000 {
             log::error!("unexpected max chunk size {}", max_chunk_size);
         }
 
@@ -106,22 +103,14 @@ impl<R: Read + Seek> Read for ChunkedZLibReader<R> {
         if let Ok(bytes_read) = result {
             // End of chunk
             if bytes_read < buf.len() {
-                let mut file = self.decoder.take().unwrap().into_inner();
-
-                file.seek(SeekFrom::Start(self.chunk_end))?;
+                let mut file = self.decoder.take().unwrap().into_inner().into_inner();
 
                 let chunk_length = match ChunkedZLibReader::read_header(&mut file) {
                     Ok(n) => n,
                     Err(e) => return Err(std::io::Error::new(std::io::ErrorKind::Other, e)),
                 };
 
-                const CHUNK_HEADER_LENGTH: u64 = 24;
-                self.chunk_end = self.chunk_end + CHUNK_HEADER_LENGTH + chunk_length;
-
-                self.decoder = Some(ZlibDecoder::new(file));
-
-                // Data length
-                self.decoder.as_mut().unwrap().read_i32::<L>()?;
+                self.decoder = Some(ZlibDecoder::new(file.take(chunk_length)));
             }
         }
 
@@ -194,7 +183,8 @@ where
         file.read_exact(&mut buffer)?;
         if length > 0 {
             // Skip null char
-            file.read_u8()?;
+            let b = file.read_u8()?;
+            debug_assert_eq!(b, b'\0');
         }
         String::from_utf8_lossy(&buffer).into_owned()
     })
@@ -264,14 +254,14 @@ impl Vector4 {
 mod tests {
     use super::*;
     use std::fs::File;
-    use std::io::Cursor;
+    use std::io::{Cursor, BufReader};
     use std::iter::once;
 
     #[test]
     fn parse() {
         env_logger::builder().is_test(true).try_init().unwrap();
-        let mut file = File::open("test_files/new_world.sav").unwrap();
-        let save_file = SaveFile::parse(&mut file).unwrap();
+        let file = File::open("test_files/new_world.sav").unwrap();
+        let save_file = SaveFile::parse(&mut BufReader::new(file)).unwrap();
         dbg!(&save_file);
 
         assert_eq!(save_file.save_header, 8);
