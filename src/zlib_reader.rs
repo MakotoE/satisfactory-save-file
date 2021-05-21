@@ -2,6 +2,7 @@ use super::*;
 use flate2::read::ZlibDecoder;
 use std::io::Take;
 
+/// Reads the ZLib compressed parts of the file.
 #[derive(Debug)]
 pub struct ChunkedZLibReader<R>
 where
@@ -65,8 +66,8 @@ impl<R: Read + Seek> Read for ChunkedZLibReader<R> {
                     Err(e) => {
                         if let Some(e) = e.downcast_ref::<std::io::Error>() {
                             if e.kind() == std::io::ErrorKind::UnexpectedEof {
-                                // If end of file is reached, attempting to read header returns EOF
-                                // error
+                                // If end of file is reached, attempting to read header returns
+                                // UnexpectedEof
                                 return Ok(bytes_read);
                             }
                         }

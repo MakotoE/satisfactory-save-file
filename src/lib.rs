@@ -1,6 +1,7 @@
 use crate::zlib_reader::ChunkedZLibReader;
 use anyhow::{Error, Result};
 use byteorder::{LittleEndian as L, ReadBytesExt};
+use std::collections::HashMap;
 use std::convert::TryInto;
 use std::io::{Read, Seek};
 
@@ -11,8 +12,8 @@ pub struct SaveFile {
     pub save_header: i32,
     pub save_version: i32,
     pub build_version: i32,
-    pub world_type: String,       // Make this an enum
-    pub world_properties: String, // Make this a struct
+    pub world_type: String,
+    pub world_properties: WorldProperties,
     pub session_name: String,
     pub play_time: i32,         // Make this a duration type
     pub save_date: i64,         // Make this a date type
@@ -36,7 +37,7 @@ impl SaveFile {
             save_version: file.read_i32::<L>()?,
             build_version: file.read_i32::<L>()?,
             world_type: read_string(file)?,
-            world_properties: read_string(file)?,
+            world_properties: WorldProperties::new(&read_string(file)?)?,
             session_name: read_string(file)?,
             play_time: file.read_i32::<L>()?,
             save_date: file.read_i64::<L>()?,
@@ -56,6 +57,42 @@ impl SaveFile {
                 .push(SaveObject::parse(&mut decoder)?);
         }
         Ok(save_file)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct WorldProperties {
+    start_loc: String,
+    session_name: String,
+    visibility: String,
+}
+
+impl WorldProperties {
+    pub fn new(s: &str) -> Result<WorldProperties> {
+        let mut map: HashMap<&str, &str> = s
+            .split("?")
+            .skip(1) // Nothing before first "?"
+            .map(|s| {
+                s.split_once("=")
+                    .ok_or_else(|| Error::msg("invalid property"))
+            })
+            .collect::<Result<HashMap<&str, &str>>>()?;
+
+        let not_found_error = || Error::msg("property not found");
+        Ok(WorldProperties {
+            start_loc: map
+                .remove("startloc")
+                .ok_or_else(not_found_error)?
+                .to_string(),
+            session_name: map
+                .remove("sessionName")
+                .ok_or_else(not_found_error)?
+                .to_string(),
+            visibility: map
+                .remove("Visibility")
+                .ok_or_else(not_found_error)?
+                .to_string(),
+        })
     }
 }
 
@@ -214,6 +251,16 @@ mod tests {
             SaveObject::SaveEntity { type_path, .. }
                 if type_path == "/Script/FactoryGame.FGFoliageRemoval"
         ));
+    }
+
+    #[test]
+    fn world_properties() {
+        assert!(WorldProperties::new("").is_err());
+        let string = "?startloc=Grass Fields?sessionName=test_file?Visibility=SV_Private";
+        let result = WorldProperties::new(string).unwrap();
+        assert_eq!(result.start_loc, "Grass Fields");
+        assert_eq!(result.session_name, "test_file");
+        assert_eq!(result.visibility, "SV_Private");
     }
 
     fn to_encoding(b: &[u8]) -> Vec<u8> {
