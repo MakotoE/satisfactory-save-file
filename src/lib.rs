@@ -1,4 +1,5 @@
 use crate::zlib_reader::ChunkedZLibReader;
+use crate::SessionVisiblity::{SvFriendsOnly, SvInvalid, SvPrivate};
 use anyhow::{Error, Result};
 use byteorder::{LittleEndian as L, ReadBytesExt};
 use chrono::{DateTime, Duration, TimeZone, Utc};
@@ -18,7 +19,7 @@ pub struct SaveFile {
     pub session_name: String,
     pub play_time: Duration,
     pub save_date: DateTime<Utc>,
-    pub session_visibility: u8, // Make this an enum
+    pub session_visibility: SessionVisiblity,
     pub editor_object_version: i32,
     pub mod_meta_data: String,
     pub is_modded_save: bool,
@@ -27,6 +28,7 @@ pub struct SaveFile {
 
 impl SaveFile {
     /// Do not pass a BufReader. I don't know why this fails with BufReader.
+    /// Tested with build version 152331.
     pub fn parse<R>(file: &mut R) -> Result<SaveFile>
     where
         R: Read + Seek,
@@ -42,9 +44,8 @@ impl SaveFile {
             world_properties: WorldProperties::new(&read_string(file)?)?,
             session_name: read_string(file)?,
             play_time: Duration::seconds(file.read_i32::<L>()?.try_into()?),
-            save_date: chrono::Utc.ymd(1, 1, 1).and_hms(12, 0, 0)
-                + Duration::nanoseconds(file.read_i64::<L>()?) * 100,
-            session_visibility: file.read_u8()?,
+            save_date: SaveFile::convert_date(file.read_i64::<L>()?),
+            session_visibility: SessionVisiblity::from_u8(file.read_u8()?)?,
             editor_object_version: file.read_i32::<L>()?,
             mod_meta_data: read_string(file)?,
             is_modded_save: file.read_i32::<L>()? > 0,
@@ -61,6 +62,14 @@ impl SaveFile {
         }
         Ok(save_file)
     }
+
+    fn zero_date() -> DateTime<Utc> {
+        chrono::Utc.ymd(1, 1, 1).and_hms(12, 0, 0)
+    }
+
+    fn convert_date(n: i64) -> DateTime<Utc> {
+        SaveFile::zero_date() + Duration::nanoseconds(n) * 100
+    }
 }
 
 impl Default for SaveFile {
@@ -73,7 +82,7 @@ impl Default for SaveFile {
             world_properties: Default::default(),
             session_name: Default::default(),
             play_time: Duration::zero(),
-            save_date: chrono::Utc.ymd(1, 1, 1).and_hms(12, 0, 0),
+            save_date: SaveFile::zero_date(),
             session_visibility: Default::default(),
             editor_object_version: Default::default(),
             mod_meta_data: Default::default(),
@@ -87,7 +96,7 @@ impl Default for SaveFile {
 pub struct WorldProperties {
     pub start_loc: String,
     pub session_name: String,
-    pub visibility: String,
+    pub visibility: SessionVisiblity,
 }
 
 impl WorldProperties {
@@ -97,7 +106,7 @@ impl WorldProperties {
             .skip(1) // Nothing before first "?"
             .map(|s| {
                 s.split_once("=")
-                    .ok_or_else(|| Error::msg("invalid property"))
+                    .ok_or_else(|| Error::msg(format!("invalid property: {}", s)))
             })
             .collect::<Result<HashMap<&str, &str>>>()?;
 
@@ -111,11 +120,43 @@ impl WorldProperties {
                 .remove("sessionName")
                 .ok_or_else(not_found_error)?
                 .to_string(),
-            visibility: map
-                .remove("Visibility")
-                .ok_or_else(not_found_error)?
-                .to_string(),
+            visibility: SessionVisiblity::parse(
+                map.remove("Visibility").ok_or_else(not_found_error)?,
+            )?,
         })
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum SessionVisiblity {
+    SvPrivate,
+    SvFriendsOnly,
+    SvInvalid,
+}
+
+impl SessionVisiblity {
+    pub fn from_u8(n: u8) -> Result<SessionVisiblity> {
+        Ok(match n {
+            0 => SvPrivate,
+            1 => SvFriendsOnly,
+            2 => SvInvalid,
+            _ => return Err(Error::msg(format!("invalid n: {}", n))),
+        })
+    }
+
+    pub fn parse(s: &str) -> Result<SessionVisiblity> {
+        Ok(match s {
+            "SV_Private" => SvPrivate,
+            "SV_FriendsOnly" => SvFriendsOnly,
+            "SV_Invalid" => SvInvalid,
+            _ => return Err(Error::msg(format!("invalid s: {}", s))),
+        })
+    }
+}
+
+impl Default for SessionVisiblity {
+    fn default() -> Self {
+        SvPrivate
     }
 }
 
@@ -283,7 +324,7 @@ mod tests {
         let result = WorldProperties::new(string).unwrap();
         assert_eq!(result.start_loc, "Grass Fields");
         assert_eq!(result.session_name, "test_file");
-        assert_eq!(result.visibility, "SV_Private");
+        assert_eq!(result.visibility, SessionVisiblity::SvPrivate);
     }
 
     fn to_encoding(b: &[u8]) -> Vec<u8> {
