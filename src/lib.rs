@@ -195,7 +195,7 @@ impl Vector4 {
 mod tests {
     use super::*;
     use std::fs::File;
-    use std::io::{BufReader, Cursor};
+    use std::io::Cursor;
     use std::iter::once;
 
     #[test]
@@ -203,13 +203,17 @@ mod tests {
         env_logger::builder().is_test(true).try_init().unwrap();
         let mut file = File::open("test_files/new_world.sav").unwrap();
         let save_file = SaveFile::parse(&mut file).unwrap();
-        dbg!(&save_file.save_objects.len());
-
         assert_eq!(save_file.save_header, 8);
         assert_eq!(save_file.save_version, 25);
         assert_eq!(save_file.build_version, 152331);
         assert_eq!(save_file.world_type, "Persistent_Level");
         assert_eq!(save_file.session_name, "test_file");
+        assert_eq!(save_file.save_objects.len(), 13920);
+        assert!(matches!(
+            &save_file.save_objects[0],
+            SaveObject::SaveEntity { type_path, .. }
+                if type_path == "/Script/FactoryGame.FGFoliageRemoval"
+        ));
     }
 
     fn to_encoding(b: &[u8]) -> Vec<u8> {

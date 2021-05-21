@@ -1,6 +1,6 @@
 use super::*;
 use flate2::read::ZlibDecoder;
-use std::io::{SeekFrom, Take};
+use std::io::Take;
 
 #[derive(Debug)]
 pub struct ChunkedZLibReader<R>
@@ -13,7 +13,6 @@ where
 impl<R: Read + Seek> ChunkedZLibReader<R> {
     pub fn new(mut file: R) -> Result<Self> {
         let chunk_length = ChunkedZLibReader::read_header(&mut file)?;
-        dbg!(file.seek(SeekFrom::Current(0))?);
         let mut decoder = ZlibDecoder::new(file.take(chunk_length));
 
         // Data length
@@ -48,35 +47,33 @@ impl<R: Read + Seek> ChunkedZLibReader<R> {
 
 impl<R: Read + Seek> Read for ChunkedZLibReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        if matches!(self.decoder, None) {
+        let result = if let Some(decoder) = self.decoder.as_mut() {
+            decoder.read(buf)
+        } else {
+            // This branch happens after read_header() returned UnexpectedEof below. We return 0 to
+            // indicate end of file.
             return Ok(0);
-        }
-
-        // self.decoder is always Some here
-        let result = self.decoder.as_mut().unwrap().read(buf);
+        };
 
         if let Ok(bytes_read) = result {
             // End of chunk
             if bytes_read < buf.len() {
-                // self.decoder becomes None here
                 let mut file = self.decoder.take().unwrap().into_inner().into_inner();
 
-                dbg!(file.seek(SeekFrom::Current(0))?);
                 let chunk_length = match ChunkedZLibReader::read_header(&mut file) {
                     Ok(n) => n,
                     Err(e) => {
                         if let Some(e) = e.downcast_ref::<std::io::Error>() {
                             if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                                // If end of file is reached, attempting to read header returns EOF
+                                // error
                                 return Ok(bytes_read);
                             }
                         }
                         return Err(std::io::Error::new(std::io::ErrorKind::Other, e));
                     }
                 };
-                let pos = file.seek(SeekFrom::Current(0))?;
-                dbg!(chunk_length);
 
-                // self.decoder is put back here
                 self.decoder = Some(ZlibDecoder::new(file.take(chunk_length)));
 
                 if bytes_read == 0 {
