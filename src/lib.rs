@@ -48,7 +48,6 @@ impl SaveFile {
         };
 
         let mut decoder = ChunkedZLibReader::new(file)?;
-
         let world_object_count = decoder.read_u32::<L>()?;
         save_file.save_objects.reserve(world_object_count as usize);
         for _ in 0..world_object_count {
@@ -202,9 +201,9 @@ mod tests {
     #[test]
     fn parse() {
         env_logger::builder().is_test(true).try_init().unwrap();
-        let file = File::open("test_files/new_world.sav").unwrap();
-        let save_file = SaveFile::parse(&mut BufReader::new(file)).unwrap();
-        dbg!(&save_file);
+        let mut file = File::open("test_files/new_world.sav").unwrap();
+        let save_file = SaveFile::parse(&mut file).unwrap();
+        dbg!(&save_file.save_objects.len());
 
         assert_eq!(save_file.save_header, 8);
         assert_eq!(save_file.save_version, 25);
