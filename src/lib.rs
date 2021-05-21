@@ -1,13 +1,14 @@
 use crate::zlib_reader::ChunkedZLibReader;
 use anyhow::{Error, Result};
 use byteorder::{LittleEndian as L, ReadBytesExt};
+use chrono::{DateTime, Duration, TimeZone, Utc};
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::io::{Read, Seek};
 
 pub mod zlib_reader;
 
-#[derive(Debug, Default, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SaveFile {
     pub save_header: i32,
     pub save_version: i32,
@@ -15,8 +16,8 @@ pub struct SaveFile {
     pub world_type: String,
     pub world_properties: WorldProperties,
     pub session_name: String,
-    pub play_time: i32,         // Make this a duration type
-    pub save_date: i64,         // Make this a date type
+    pub play_time: Duration,
+    pub save_date: DateTime<Utc>,
     pub session_visibility: u8, // Make this an enum
     pub editor_object_version: i32,
     pub mod_meta_data: String,
@@ -25,6 +26,7 @@ pub struct SaveFile {
 }
 
 impl SaveFile {
+    /// Do not pass a BufReader. I don't know why this fails with BufReader.
     pub fn parse<R>(file: &mut R) -> Result<SaveFile>
     where
         R: Read + Seek,
@@ -39,8 +41,9 @@ impl SaveFile {
             world_type: read_string(file)?,
             world_properties: WorldProperties::new(&read_string(file)?)?,
             session_name: read_string(file)?,
-            play_time: file.read_i32::<L>()?,
-            save_date: file.read_i64::<L>()?,
+            play_time: Duration::seconds(file.read_i32::<L>()?.try_into()?),
+            save_date: chrono::Utc.ymd(1, 1, 1).and_hms(12, 0, 0)
+                + Duration::nanoseconds(file.read_i64::<L>()?) * 100,
             session_visibility: file.read_u8()?,
             editor_object_version: file.read_i32::<L>()?,
             mod_meta_data: read_string(file)?,
@@ -60,11 +63,31 @@ impl SaveFile {
     }
 }
 
+impl Default for SaveFile {
+    fn default() -> Self {
+        Self {
+            save_header: Default::default(),
+            save_version: Default::default(),
+            build_version: Default::default(),
+            world_type: Default::default(),
+            world_properties: Default::default(),
+            session_name: Default::default(),
+            play_time: Duration::zero(),
+            save_date: chrono::Utc.ymd(1, 1, 1).and_hms(12, 0, 0),
+            session_visibility: Default::default(),
+            editor_object_version: Default::default(),
+            mod_meta_data: Default::default(),
+            is_modded_save: Default::default(),
+            save_objects: Default::default(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct WorldProperties {
-    start_loc: String,
-    session_name: String,
-    visibility: String,
+    pub start_loc: String,
+    pub session_name: String,
+    pub visibility: String,
 }
 
 impl WorldProperties {

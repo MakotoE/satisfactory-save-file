@@ -9,6 +9,7 @@ anyhow = "1.0"
 byteorder = "1.4"
 flate2 = { version = "1.0", default_features = false, features = ["zlib"] }
 log = "0.4"
+chrono = "0.4"
 
 [dev-dependencies]
 env_logger = "0.8"
