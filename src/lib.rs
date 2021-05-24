@@ -1,3 +1,5 @@
+//! `SaveFile` represents save files in Satisfactory. Use `SaveFile::parse()` to read save files.
+
 use crate::zlib_reader::ChunkedZLibReader;
 use crate::SessionVisiblity::{SvFriendsOnly, SvInvalid, SvPrivate};
 use anyhow::{Error, Result};
@@ -9,6 +11,7 @@ use std::io::{Read, Seek};
 
 pub mod zlib_reader;
 
+/// Satisfactory save file.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SaveFile {
     pub save_header: i32,
@@ -27,8 +30,14 @@ pub struct SaveFile {
 }
 
 impl SaveFile {
-    /// Do not pass a BufReader. I don't know why this fails with BufReader.
+    /// Reads satisfactory save file to SaveFile struct.
+    ///
+    /// Save files are stored in `%localappdata%\FactoryGame\Saved\SaveGames\<your id>` and it has a
+    /// `.sav` extension.
+    ///
     /// Tested with build version 152331.
+    ///
+    /// Do not pass a BufReader. I don't know why this fails with BufReader.
     pub fn parse<R>(file: &mut R) -> Result<SaveFile>
     where
         R: Read + Seek,
@@ -102,7 +111,7 @@ pub struct WorldProperties {
 impl WorldProperties {
     pub fn new(s: &str) -> Result<WorldProperties> {
         let mut map: HashMap<&str, &str> = s
-            .split("?")
+            .split('?')
             .skip(1) // Nothing before first "?"
             .map(|s| {
                 s.split_once("=")
@@ -296,7 +305,7 @@ impl Vector4 {
 mod tests {
     use super::*;
     use std::fs::File;
-    use std::io::Cursor;
+    use std::io::{BufReader, Cursor};
     use std::iter::once;
 
     #[test]
@@ -315,6 +324,10 @@ mod tests {
             SaveObject::SaveEntity { type_path, .. }
                 if type_path == "/Script/FactoryGame.FGFoliageRemoval"
         ));
+
+        // Demonstrates how it fails when reading from BufReader
+        let mut file = File::open("test_files/new_world.sav").unwrap();
+        assert!(SaveFile::parse(&mut BufReader::new(file)).is_err());
     }
 
     #[test]

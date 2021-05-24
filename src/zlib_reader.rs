@@ -2,16 +2,16 @@ use super::*;
 use flate2::read::ZlibDecoder;
 use std::io::Take;
 
-/// Reads the ZLib compressed parts of the file.
+/// Reads the zlib compressed parts of the file.
 #[derive(Debug)]
 pub struct ChunkedZLibReader<R>
 where
-    R: Read + Seek,
+    R: Read,
 {
     decoder: Option<ZlibDecoder<Take<R>>>,
 }
 
-impl<R: Read + Seek> ChunkedZLibReader<R> {
+impl<R: Read> ChunkedZLibReader<R> {
     pub fn new(mut file: R) -> Result<Self> {
         let chunk_length = ChunkedZLibReader::read_header(&mut file)?;
         let mut decoder = ZlibDecoder::new(file.take(chunk_length));
@@ -46,7 +46,7 @@ impl<R: Read + Seek> ChunkedZLibReader<R> {
     }
 }
 
-impl<R: Read + Seek> Read for ChunkedZLibReader<R> {
+impl<R: Read> Read for ChunkedZLibReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let result = if let Some(decoder) = self.decoder.as_mut() {
             decoder.read(buf)
