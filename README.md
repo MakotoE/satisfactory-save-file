@@ -1,0 +1,1 @@
+This Rust crate contains `SaveFile` which represents save files in Satisfactory. Use `SaveFile::parse()` to read save files.

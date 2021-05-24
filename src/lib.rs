@@ -326,7 +326,7 @@ mod tests {
         ));
 
         // Demonstrates how it fails when reading from BufReader
-        let mut file = File::open("test_files/new_world.sav").unwrap();
+        let file = File::open("test_files/new_world.sav").unwrap();
         assert!(SaveFile::parse(&mut BufReader::new(file)).is_err());
     }
 
