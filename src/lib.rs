@@ -37,7 +37,8 @@ impl SaveFile {
     ///
     /// Tested with build version 152331.
     ///
-    /// Do not pass a BufReader. I don't know why this fails with BufReader.
+    /// Do not pass a BufReader. I don't know why this fails with BufReader. Create an issue if you
+    /// figured it out.
     pub fn parse<R>(file: &mut R) -> Result<SaveFile>
     where
         R: Read + Seek,
