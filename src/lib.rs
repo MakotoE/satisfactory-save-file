@@ -325,6 +325,8 @@ mod tests {
                 if type_path == "/Script/FactoryGame.FGFoliageRemoval"
         ));
 
+        SaveFile::parse(&mut File::open("test_files/test_save2.sav").unwrap()).unwrap();
+
         // Demonstrates how it fails when reading from BufReader
         let file = File::open("test_files/new_world.sav").unwrap();
         assert!(SaveFile::parse(&mut BufReader::new(file)).is_err());
