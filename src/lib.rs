@@ -222,21 +222,35 @@ pub fn read_string<R>(file: &mut R) -> Result<String>
 where
     R: Read,
 {
-    let length = file.read_i32::<L>()?;
+    const MAX_LENGTH: usize = 0x1000;
+    let length_error = || Error::msg("invalid length");
+    let signed_length = file.read_i32::<L>()?;
 
-    Ok(if length < 0 {
+    Ok(if signed_length < 0 {
+        // Negation fails with minimum i32
+        if signed_length == i32::MIN {
+            return Err(length_error());
+        }
+
         let mut buffer: Vec<u16> = Vec::new();
-        buffer.resize(((-length) as usize).saturating_sub(1) / 2, 0);
+        let length = ((-signed_length) as usize).saturating_sub(1) / 2;
+        if length > MAX_LENGTH {
+            return Err(length_error());
+        }
+        buffer.resize(length, 0);
         file.read_u16_into::<L>(&mut buffer)?;
         String::from_utf16_lossy(&buffer)
     } else {
         let mut buffer: Vec<u8> = Vec::new();
-        buffer.resize((length.abs() as usize).saturating_sub(1), b'\0');
+        let length = (signed_length as usize).saturating_sub(1);
+        if length > MAX_LENGTH {
+            return Err(length_error());
+        }
+        buffer.resize(length, b'\0');
         file.read_exact(&mut buffer)?;
         if length > 0 {
             // Skip null char
-            let b = file.read_u8()?;
-            debug_assert_eq!(b, b'\0');
+            file.read_u8()?;
         }
         String::from_utf8_lossy(&buffer).into_owned()
     })
@@ -357,14 +371,24 @@ mod tests {
     fn test_read_string() {
         {
             // Empty file
-            let mut data = Cursor::new(Vec::new());
-            assert!(read_string(&mut data).is_err());
+            assert!(read_string(&mut &Vec::new()[..]).is_err());
         }
         {
             // Just the prefix
             let mut data = &0_i32.to_le_bytes()[..];
             assert_eq!(read_string(&mut data).unwrap(), "");
         }
+
+        // Invalid lengths
+        let cases: &[&[u8]] = &[
+            &i32::MIN.to_le_bytes()[..],
+            &(i32::MIN + 1).to_le_bytes()[..],
+            &i32::MAX.to_le_bytes()[..],
+        ];
+        for data in cases {
+            assert!(read_string(&mut &data.to_vec()[..]).is_err());
+        }
+
         // Various strings
         for test_string in &["", "a", "abc"] {
             let encoded = to_encoding(test_string.as_bytes());
