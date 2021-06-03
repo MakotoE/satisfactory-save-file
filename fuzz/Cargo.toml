@@ -24,3 +24,21 @@ name = "world_properties"
 path = "fuzz_targets/world_properties.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "read_string"
+path = "fuzz_targets/read_string.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "save_object"
+path = "fuzz_targets/save_object.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "save_file"
+path = "fuzz_targets/save_file.rs"
+test = false
+doc = false

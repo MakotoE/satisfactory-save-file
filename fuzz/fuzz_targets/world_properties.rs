@@ -4,6 +4,6 @@ use satisfactory_save_file::WorldProperties;
 
 fuzz_target!(|data: &[u8]| {
     if let Ok(s) = std::str::from_utf8(data) {
-        let _ = WorldProperties::new(s);
+        let _ = WorldProperties::parse(s);
     }
 });

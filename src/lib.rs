@@ -51,7 +51,7 @@ impl SaveFile {
             save_version: file.read_i32::<L>()?,
             build_version: file.read_i32::<L>()?,
             world_type: read_string(file)?,
-            world_properties: WorldProperties::new(&read_string(file)?)?,
+            world_properties: WorldProperties::parse(&read_string(file)?)?,
             session_name: read_string(file)?,
             play_time: Duration::seconds(file.read_i32::<L>()?.try_into()?),
             save_date: SaveFile::convert_date(file.read_i64::<L>()?),
@@ -110,7 +110,7 @@ pub struct WorldProperties {
 }
 
 impl WorldProperties {
-    pub fn new(s: &str) -> Result<WorldProperties> {
+    pub fn parse(s: &str) -> Result<WorldProperties> {
         let mut map: HashMap<&str, &str> = s
             .split('?')
             .skip(1) // Nothing before first "?"
@@ -218,7 +218,7 @@ impl SaveObject {
     }
 }
 
-fn read_string<R>(file: &mut R) -> Result<String>
+pub fn read_string<R>(file: &mut R) -> Result<String>
 where
     R: Read,
 {
@@ -335,9 +335,9 @@ mod tests {
 
     #[test]
     fn world_properties() {
-        assert!(WorldProperties::new("").is_err());
+        assert!(WorldProperties::parse("").is_err());
         let string = "?startloc=Grass Fields?sessionName=test_file?Visibility=SV_Private";
-        let result = WorldProperties::new(string).unwrap();
+        let result = WorldProperties::parse(string).unwrap();
         assert_eq!(result.start_loc, "Grass Fields");
         assert_eq!(result.session_name, "test_file");
         assert_eq!(result.visibility, SessionVisiblity::SvPrivate);
